@@ -32,6 +32,7 @@ class Provider(ABC):
         model: str | None = None,
         system_prompt: str | None = None,
         allowed_tools: tuple[str, ...] | None = None,
+        add_dirs: list[str] | None = None,
     ) -> ProviderResponse:
         """Send a message and return a ProviderResponse."""
 
@@ -56,10 +57,11 @@ class ClaudeCodeProvider(Provider):
         model: str | None = None,
         system_prompt: str | None = None,
         allowed_tools: tuple[str, ...] | None = None,
+        add_dirs: list[str] | None = None,
     ) -> ProviderResponse:
         tools = allowed_tools if allowed_tools is not None else self._default_tools
         prompt = self._build_prompt(message, files)
-        cmd = self._build_command(prompt, session_id, model, system_prompt, tools)
+        cmd = self._build_command(prompt, session_id, model, system_prompt, tools, add_dirs)
 
         result = subprocess.run(
             cmd,
@@ -90,6 +92,7 @@ class ClaudeCodeProvider(Provider):
         model: str | None,
         system_prompt: str | None,
         allowed_tools: tuple[str, ...],
+        add_dirs: list[str] | None,
     ) -> list[str]:
         cmd = ["claude", "-p", prompt, "--output-format", "json"]
 
@@ -104,6 +107,9 @@ class ClaudeCodeProvider(Provider):
 
         if allowed_tools:
             cmd.extend(["--allowedTools", ",".join(allowed_tools)])
+
+        if add_dirs:
+            cmd.extend(["--add-dir", *add_dirs])
 
         return cmd
 

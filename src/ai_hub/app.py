@@ -138,6 +138,14 @@ def on_switch_conversation(
     return history, state
 
 
+def _parse_dirs(raw: str | None) -> list[str] | None:
+    """Parse newline-separated directory paths, ignoring blanks."""
+    if not raw:
+        return None
+    dirs = [d.strip() for d in raw.splitlines() if d.strip()]
+    return dirs or None
+
+
 def handle_chat(
     message: dict,
     history: list[dict],
@@ -145,6 +153,7 @@ def handle_chat(
     model: str,
     tools: list[str],
     system_prompt: str,
+    add_dirs_raw: str,
     request: gr.Request,
 ) -> tuple[list[dict], dict, dict, str]:
     text = message.get("text", "").strip()
@@ -187,6 +196,7 @@ def handle_chat(
         model=model or None,
         system_prompt=sp,
         allowed_tools=tuple(tools) if tools else None,
+        add_dirs=_parse_dirs(add_dirs_raw),
     )
 
     if resp.session_id and resp.session_id != state.get("claude_session_id"):
@@ -206,6 +216,7 @@ def handle_voice(
     model: str,
     tools: list[str],
     system_prompt: str,
+    add_dirs_raw: str,
     request: gr.Request,
 ) -> tuple[list[dict], None, dict, str]:
     if audio_path is None:
@@ -233,6 +244,7 @@ def handle_voice(
         model=model or None,
         system_prompt=sp,
         allowed_tools=tuple(tools) if tools else None,
+        add_dirs=_parse_dirs(add_dirs_raw),
     )
 
     if resp.session_id and resp.session_id != state.get("claude_session_id"):
@@ -415,6 +427,11 @@ def build_app(auth_fn) -> gr.Blocks:
                 placeholder="e.g. Always respond in Spanish.",
                 lines=2,
             )
+            add_dirs_input = gr.Textbox(
+                label="Additional directories (one per line)",
+                placeholder="/home/user/other-project\n/home/user/docs",
+                lines=3,
+            )
 
         # -- Admin Panel -----------------------------------------------------
 
@@ -495,6 +512,7 @@ def build_app(auth_fn) -> gr.Blocks:
                 model_dropdown,
                 tools_select,
                 system_prompt_input,
+                add_dirs_input,
             ],
             outputs=[chatbot, text_input, state, usage_display],
         )
@@ -508,6 +526,7 @@ def build_app(auth_fn) -> gr.Blocks:
                 model_dropdown,
                 tools_select,
                 system_prompt_input,
+                add_dirs_input,
             ],
             outputs=[chatbot, audio_input, state, usage_display],
         )
