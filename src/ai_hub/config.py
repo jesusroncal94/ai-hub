@@ -12,6 +12,14 @@ AVAILABLE_MODELS: tuple[tuple[str, str], ...] = (
     ("Haiku", "haiku"),
 )
 
+# Permission modes for --permission-mode
+PERMISSION_MODES: tuple[tuple[str, str], ...] = (
+    ("Default", "default"),
+    ("Accept Edits", "acceptEdits"),
+    ("Bypass All", "bypassPermissions"),
+    ("Plan Only", "plan"),
+)
+
 # All built-in tools that can be enabled via --allowedTools
 ALL_TOOLS: tuple[str, ...] = (
     "Read",

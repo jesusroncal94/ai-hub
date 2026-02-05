@@ -99,6 +99,17 @@ Open the **Settings** accordion to configure which tools Claude can use. Tools a
 
 By default only **Read** is enabled. Enable additional tools as needed.
 
+### Permission Mode
+
+The **Permission mode** dropdown in the Settings accordion controls how Claude handles tool permissions. This is passed as `--permission-mode`.
+
+| Mode | CLI value | Description |
+|------|-----------|-------------|
+| Default | `default` | Claude asks for permission before using tools |
+| Accept Edits | `acceptEdits` | Automatically accept file edits, ask for other tools |
+| Bypass All | `bypassPermissions` | Skip all permission prompts (use with caution) |
+| Plan Only | `plan` | Claude can only plan, not execute actions |
+
 ### System Prompt
 
 The **System prompt** textbox in the Settings accordion lets you append custom instructions to Claude's default system prompt. This is passed as `--append-system-prompt`.

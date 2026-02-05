@@ -5,7 +5,7 @@ from pathlib import Path
 import gradio as gr
 
 from ai_hub.auth import authenticate, hash_password, seed_admin
-from ai_hub.config import ALL_TOOLS, AVAILABLE_MODELS, settings
+from ai_hub.config import ALL_TOOLS, AVAILABLE_MODELS, PERMISSION_MODES, settings
 from ai_hub.database import Database
 from ai_hub.processors import extract_text, save_upload, transcribe_audio
 from ai_hub.providers import ClaudeCodeProvider, ProviderResponse
@@ -154,6 +154,7 @@ def handle_chat(
     tools: list[str],
     system_prompt: str,
     add_dirs_raw: str,
+    permission_mode: str,
     request: gr.Request,
 ) -> tuple[list[dict], dict, dict, str]:
     text = message.get("text", "").strip()
@@ -189,6 +190,7 @@ def handle_chat(
     prompt = "\n\n".join(prompt_parts)
 
     sp = system_prompt.strip() if system_prompt else None
+    pm = permission_mode if permission_mode else None
     resp = provider.send(
         prompt,
         image_files or None,
@@ -197,6 +199,7 @@ def handle_chat(
         system_prompt=sp,
         allowed_tools=tuple(tools) if tools else None,
         add_dirs=_parse_dirs(add_dirs_raw),
+        permission_mode=pm,
     )
 
     if resp.session_id and resp.session_id != state.get("claude_session_id"):
@@ -217,6 +220,7 @@ def handle_voice(
     tools: list[str],
     system_prompt: str,
     add_dirs_raw: str,
+    permission_mode: str,
     request: gr.Request,
 ) -> tuple[list[dict], None, dict, str]:
     if audio_path is None:
@@ -238,6 +242,7 @@ def handle_voice(
     _auto_title(conv_id, text)
 
     sp = system_prompt.strip() if system_prompt else None
+    pm = permission_mode if permission_mode else None
     resp = provider.send(
         text,
         session_id=state.get("claude_session_id"),
@@ -245,6 +250,7 @@ def handle_voice(
         system_prompt=sp,
         allowed_tools=tuple(tools) if tools else None,
         add_dirs=_parse_dirs(add_dirs_raw),
+        permission_mode=pm,
     )
 
     if resp.session_id and resp.session_id != state.get("claude_session_id"):
@@ -422,6 +428,12 @@ def build_app(auth_fn) -> gr.Blocks:
                 choices=list(ALL_TOOLS),
                 value=list(settings.default_tools),
             )
+            permission_mode_dropdown = gr.Dropdown(
+                label="Permission mode",
+                choices=[(label, value) for label, value in PERMISSION_MODES],
+                value="default",
+                interactive=True,
+            )
             system_prompt_input = gr.Textbox(
                 label="System prompt (appended to default)",
                 placeholder="e.g. Always respond in Spanish.",
@@ -513,6 +525,7 @@ def build_app(auth_fn) -> gr.Blocks:
                 tools_select,
                 system_prompt_input,
                 add_dirs_input,
+                permission_mode_dropdown,
             ],
             outputs=[chatbot, text_input, state, usage_display],
         )
@@ -527,6 +540,7 @@ def build_app(auth_fn) -> gr.Blocks:
                 tools_select,
                 system_prompt_input,
                 add_dirs_input,
+                permission_mode_dropdown,
             ],
             outputs=[chatbot, audio_input, state, usage_display],
         )
