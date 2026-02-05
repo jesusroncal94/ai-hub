@@ -73,14 +73,14 @@ def handle_new_chat() -> list:
 
 def build_app() -> gr.Blocks:
     """Build and return the Gradio application."""
-    with gr.Blocks(title="AI Hub", theme=gr.themes.Soft()) as app:
+    with gr.Blocks() as app:
         gr.Markdown(
             "# AI Hub\n"
             "Multimodal AI chat powered by Claude Code. "
             "Send text, images, PDFs, or voice."
         )
 
-        chatbot = gr.Chatbot(type="messages", height=500, label="Conversation")
+        chatbot = gr.Chatbot(height=500, label="Conversation")
 
         with gr.Tabs():
             with gr.TabItem("Text & Files"):
@@ -136,7 +136,11 @@ def main() -> None:
     """Launch the application."""
     settings.ensure_dirs()
     app = build_app()
-    app.launch(server_name=settings.server_host, server_port=settings.server_port)
+    app.launch(
+        server_name=settings.server_host,
+        server_port=settings.server_port,
+        theme=gr.themes.Soft(),
+    )
 
 
 if __name__ == "__main__":
