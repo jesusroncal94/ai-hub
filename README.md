@@ -34,9 +34,15 @@ The app will be available at `http://127.0.0.1:7860`.
 
 ## Voice Support (Optional)
 
-Voice input requires OpenAI Whisper, which pulls in PyTorch:
+Voice input requires OpenAI Whisper (pulls in PyTorch) and `ffmpeg` for audio processing:
 
 ```bash
+# Install ffmpeg (system dependency)
+# Ubuntu/Debian: sudo apt-get install ffmpeg
+# macOS: brew install ffmpeg
+# WSL: brew install ffmpeg
+
+# Install Whisper
 uv sync --extra voice
 ```
 
