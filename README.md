@@ -4,7 +4,12 @@ Lightweight multimodal AI chat interface powered by Claude Code.
 
 ## Features
 
-- **Text chat** with conversation memory (session continuity)
+- **Authentication** — per-user login with PBKDF2-hashed passwords stored in SQLite
+- **Whitelist access control** — only whitelisted users can log in; admin manages the whitelist
+- **Admin panel** — create/delete users, manage whitelist, all from the UI
+- **Conversation persistence** — messages saved in SQLite (`.data/ai_hub.db`)
+- **Multi-conversation UI** — switch between conversations via dropdown, create new ones
+- **Text chat** with conversation memory (session continuity via Claude Code `--resume`)
 - **File uploads**: images (vision), PDFs, Word, Excel, CSV, code files, and plain text
 - **Voice input** via microphone (requires optional Whisper dependency)
 - **Claude Code backend**: uses your Max/Pro plan subscription (no API key needed)
@@ -30,7 +35,43 @@ uv sync
 uv run ai-hub
 ```
 
-The app will be available at `http://127.0.0.1:7860`.
+On first run:
+1. The app seeds an admin user with default credentials: **admin / admin**
+2. A login prompt appears at `http://127.0.0.1:7860`
+3. Log in with `admin` / `admin`
+4. Open the **Admin Panel** (accordion at the bottom) to create more users
+
+## Authentication & Whitelist
+
+All credentials are stored in SQLite with PBKDF2-SHA256 hashed passwords. Access is controlled by a **whitelist** — only whitelisted usernames can log in.
+
+### Why whitelist (not blacklist)?
+
+AI Hub uses your personal Claude Max/Pro subscription. A whitelist (default-deny) ensures only explicitly approved users consume your resources. A blacklist (default-allow) would let anyone register and use your subscription.
+
+### Admin Panel
+
+Admin users see an **Admin Panel** accordion at the bottom of the UI:
+
+| Action | Description |
+|--------|-------------|
+| **Create User** | Set username, password, and admin flag. Auto-adds to whitelist. |
+| **Delete User** | Remove a user account and their whitelist entry. |
+| **Add to Whitelist** | Allow a username to log in. |
+| **Remove from Whitelist** | Revoke login access without deleting user data. |
+| **Refresh tables** | Reload the users and whitelist tables. |
+
+Safeguards:
+- Cannot delete yourself
+- Cannot remove the last whitelisted admin
+
+## Conversation Management
+
+- Each user has their own conversations stored in SQLite
+- The first message in a conversation auto-sets the title (truncated to 50 chars)
+- Use the **dropdown** to switch between conversations
+- Click **+ New** to start a fresh conversation
+- Conversations persist across app restarts
 
 ## Voice Support (Optional)
 
@@ -51,8 +92,10 @@ uv sync --extra voice
 ```
 src/ai_hub/
 ├── __init__.py       # Package metadata
-├── app.py            # Gradio UI and entry point
+├── app.py            # Gradio UI, event handlers, admin panel, and entry point
+├── auth.py           # PBKDF2 password hashing and DB-backed authentication
 ├── config.py         # Application settings
+├── database.py       # SQLite persistence (users, whitelist, conversations, messages)
 ├── providers.py      # AI provider abstraction + Claude Code implementation
 └── processors.py     # Voice transcription and document text extraction
 ```
@@ -63,6 +106,9 @@ The application uses `claude -p` (Claude Code CLI in non-interactive mode) as it
 
 ```
 User Input (text/files/voice)
+        |
+        v
+   Login (PBKDF2 auth + whitelist check)
         |
         v
    Gradio UI (localhost:7860)
@@ -77,7 +123,7 @@ User Input (text/files/voice)
    claude -p --output-format json [--resume session_id]
         |
         v
-   Response displayed in chat
+   Response saved to SQLite + displayed in chat
 ```
 
 ## Supported File Types

@@ -11,8 +11,8 @@ wheels/
 # Virtual environment
 .venv/
 
-# Uploads
-.uploads/
+# Data (uploads, database, users)
+.data/
 
 # IDE
 .idea/
