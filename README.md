@@ -5,7 +5,7 @@ Lightweight multimodal AI chat interface powered by Claude Code.
 ## Features
 
 - **Text chat** with conversation memory (session continuity)
-- **File uploads**: images, PDFs, documents, code files
+- **File uploads**: images (vision), PDFs, Word, Excel, CSV, code files, and plain text
 - **Voice input** via microphone (requires optional Whisper dependency)
 - **Claude Code backend**: uses your Max/Pro plan subscription (no API key needed)
 - **Extensible provider system**: abstract base for adding other AI providers
@@ -54,7 +54,7 @@ src/ai_hub/
 ├── app.py            # Gradio UI and entry point
 ├── config.py         # Application settings
 ├── providers.py      # AI provider abstraction + Claude Code implementation
-└── processors.py     # Voice transcription and file handling
+└── processors.py     # Voice transcription and document text extraction
 ```
 
 ## How It Works
@@ -68,8 +68,25 @@ User Input (text/files/voice)
    Gradio UI (localhost:7860)
         |
         v
+   Pre-processing
+   ├── Documents (PDF/DOCX/XLSX/CSV) → text extraction (pypdf, python-docx, pandas)
+   ├── Images → file reference (for Claude vision)
+   └── Voice → transcription (Whisper)
+        |
+        v
    claude -p --output-format json [--resume session_id]
         |
         v
    Response displayed in chat
 ```
+
+## Supported File Types
+
+| Type | Formats | Processing |
+|------|---------|------------|
+| Images | PNG, JPG, GIF, WebP, BMP, SVG | Sent to Claude vision via file reference |
+| Documents | PDF | Text extracted with pypdf (page by page) |
+| Documents | DOCX | Text extracted with python-docx |
+| Spreadsheets | XLSX, XLS | Parsed with pandas + openpyxl (all sheets) |
+| Data | CSV | Parsed with pandas |
+| Text/Code | TXT, MD, JSON, YAML, PY, JS, TS, etc. | Read as plain text |

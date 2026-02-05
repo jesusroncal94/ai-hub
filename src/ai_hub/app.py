@@ -3,7 +3,7 @@
 import gradio as gr
 
 from ai_hub.config import settings
-from ai_hub.processors import save_upload, transcribe_audio
+from ai_hub.processors import extract_text, save_upload, transcribe_audio
 from ai_hub.providers import ClaudeCodeProvider
 
 provider = ClaudeCodeProvider(allowed_tools=settings.allowed_tools)
@@ -22,6 +22,16 @@ def handle_chat(
 
     saved = [save_upload(f, settings.upload_dir) for f in files]
 
+    # Separate images (for vision) from documents (extract text)
+    image_files: list[Path] = []
+    extracted_parts: list[str] = []
+    for f in saved:
+        content = extract_text(f)
+        if content is not None:
+            extracted_parts.append(f"--- Content of {f.name} ---\n{content}")
+        else:
+            image_files.append(f)
+
     # Build display message for the user side
     user_display = text or "Please analyze the attached files."
     if saved:
@@ -34,8 +44,12 @@ def handle_chat(
     if len(history) == 1:
         provider.reset()
 
-    prompt = text or "Analyze the attached files."
-    response = provider.send(prompt, saved or None)
+    # Build prompt: user text + extracted document content
+    prompt_parts = [text] if text else ["Analyze the following content."]
+    prompt_parts.extend(extracted_parts)
+    prompt = "\n\n".join(prompt_parts)
+
+    response = provider.send(prompt, image_files or None)
 
     history = history + [{"role": "assistant", "content": response}]
     return history, {"text": "", "files": []}
