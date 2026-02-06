@@ -1,5 +1,57 @@
 # Deployment
 
+## Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+### Required for Production
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AI_HUB_ADMIN_PASSWORD` | Admin password (random if not set) | Generated |
+| `AI_HUB_HOST` | Bind address | `127.0.0.1` |
+
+### Optional
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AI_HUB_PORT` | Server port | `7860` |
+| `AI_HUB_DATA_DIR` | Data directory | `.data` |
+| `AI_HUB_MAX_UPLOAD_MB` | Max upload size | `50` |
+| `AI_HUB_DEFAULT_MODEL` | Default AI model | `sonnet` |
+| `AI_HUB_MAX_LOGIN_ATTEMPTS` | Failed attempts before lockout | `5` |
+| `AI_HUB_LOCKOUT_SECONDS` | Lockout duration | `900` |
+
+---
+
+## Security Features
+
+### Built-in Protection
+
+| Feature | Description |
+|---------|-------------|
+| **Rate Limiting** | 5 failed login attempts → 15 min lockout |
+| **Password Hashing** | PBKDF2-SHA256 with 100k iterations |
+| **Audit Logging** | All security events logged to `.data/audit.log` |
+| **Upload Validation** | Size limits, file validation |
+| **Whitelist Auth** | Default-deny access control |
+
+### Audit Log Events
+
+```
+LOGIN_SUCCESS, LOGIN_FAILED, LOGIN_BLOCKED, LOCKOUT
+USER_CREATED, USER_DELETED
+WHITELIST_ADD, WHITELIST_REMOVE
+ADMIN_ACCESS_DENIED, UPLOAD_FAILED
+```
+
+---
+
 ## Resource Requirements
 
 ### Minimum (1-2 concurrent users, no voice)

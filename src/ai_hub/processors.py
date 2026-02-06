@@ -7,6 +7,8 @@ import pandas as pd
 from docx import Document
 from pypdf import PdfReader
 
+from ai_hub.config import settings
+
 _TEXT_EXTENSIONS = frozenset({
     ".txt", ".md", ".json", ".yaml", ".yml", ".toml",
     ".py", ".js", ".ts", ".jsx", ".tsx",
@@ -101,9 +103,43 @@ def transcribe_audio(audio_path: str, model_name: str = "base") -> str:
     return result["text"].strip()
 
 
+class UploadError(Exception):
+    """Raised when an upload validation fails."""
+
+    pass
+
+
+def validate_upload(file_path: Path) -> None:
+    """Validate an uploaded file.
+
+    Raises:
+        UploadError: If validation fails.
+    """
+    if not file_path.exists():
+        raise UploadError("File does not exist")
+
+    size = file_path.stat().st_size
+    max_size = settings.max_upload_bytes
+
+    if size > max_size:
+        max_mb = settings.max_upload_mb
+        actual_mb = size / (1024 * 1024)
+        raise UploadError(
+            f"File too large: {actual_mb:.1f}MB exceeds {max_mb}MB limit"
+        )
+
+    if size == 0:
+        raise UploadError("File is empty")
+
+
 def save_upload(file_path: str, upload_dir: Path) -> Path:
-    """Copy an uploaded file to the persistent upload directory."""
+    """Copy an uploaded file to the persistent upload directory.
+
+    Raises:
+        UploadError: If the file fails validation.
+    """
     source = Path(file_path)
+    validate_upload(source)
     destination = upload_dir / source.name
     shutil.copy2(source, destination)
     return destination

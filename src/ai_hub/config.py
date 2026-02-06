@@ -1,9 +1,13 @@
 """Application configuration."""
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
-_DATA_DIR = Path(__file__).resolve().parent.parent.parent / ".data"
+
+def _get_data_dir() -> Path:
+    return Path(os.getenv("AI_HUB_DATA_DIR", ".data")).resolve()
+
 
 # Model aliases accepted by the Claude Code CLI
 AVAILABLE_MODELS: tuple[tuple[str, str], ...] = (
@@ -35,16 +39,27 @@ ALL_TOOLS: tuple[str, ...] = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass
 class Settings:
-    """Immutable application settings."""
+    """Application settings loaded from environment variables."""
 
-    data_dir: Path = _DATA_DIR
-    whisper_model: str = "base"
-    default_model: str = "sonnet"
+    data_dir: Path = field(default_factory=_get_data_dir)
+    whisper_model: str = field(
+        default_factory=lambda: os.getenv("AI_HUB_WHISPER_MODEL", "base")
+    )
+    default_model: str = field(
+        default_factory=lambda: os.getenv("AI_HUB_DEFAULT_MODEL", "sonnet")
+    )
     default_tools: tuple[str, ...] = ("Read",)
-    server_host: str = "127.0.0.1"
-    server_port: int = 7860
+    server_host: str = field(
+        default_factory=lambda: os.getenv("AI_HUB_HOST", "127.0.0.1")
+    )
+    server_port: int = field(
+        default_factory=lambda: int(os.getenv("AI_HUB_PORT", "7860"))
+    )
+    max_upload_mb: int = field(
+        default_factory=lambda: int(os.getenv("AI_HUB_MAX_UPLOAD_MB", "50"))
+    )
 
     @property
     def upload_dir(self) -> Path:
@@ -54,10 +69,20 @@ class Settings:
     def db_path(self) -> Path:
         return self.data_dir / "ai_hub.db"
 
+    @property
+    def log_path(self) -> Path:
+        return self.data_dir / "audit.log"
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.max_upload_mb * 1024 * 1024
+
     def ensure_dirs(self) -> None:
         """Create required directories if they don't exist."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
+        # Secure permissions on data directory (owner only)
+        self.data_dir.chmod(0o700)
 
 
 settings = Settings()

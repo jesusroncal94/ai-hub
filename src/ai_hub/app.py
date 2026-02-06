@@ -6,6 +6,8 @@ import gradio as gr
 
 from ai_hub.auth import authenticate, hash_password, seed_admin
 from ai_hub.config import ALL_TOOLS, AVAILABLE_MODELS, PERMISSION_MODES, settings
+from ai_hub.processors import UploadError
+from ai_hub.security import audit_log
 
 # Layout options
 LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -279,7 +281,14 @@ def handle_chat(
     if not text and not files:
         return history, {"text": "", "files": []}, state, "", gr.update(visible=False), None
 
-    saved = [save_upload(f, settings.upload_dir) for f in files]
+    # Validate and save uploads
+    try:
+        saved = [save_upload(f, settings.upload_dir) for f in files]
+    except UploadError as e:
+        error_msg = f"Upload failed: {e}"
+        audit_log("UPLOAD_FAILED", request.username, str(e))
+        history = history + [{"role": "assistant", "content": error_msg}]
+        return history, {"text": "", "files": []}, state, "", gr.update(visible=False), None
 
     image_files: list[Path] = []
     extracted_parts: list[str] = []
@@ -657,6 +666,7 @@ def on_create_user(
     request: gr.Request,
 ) -> tuple:
     if not _is_admin(request):
+        audit_log("ADMIN_ACCESS_DENIED", request.username, "create_user attempt")
         return "Access denied.", _users_dataframe(), _whitelist_dataframe(), "", ""
     if not username or not password:
         return "Username and password are required.", _users_dataframe(), _whitelist_dataframe(), "", ""
@@ -665,6 +675,7 @@ def on_create_user(
     pw_hash = hash_password(password)
     db.create_user(username, pw_hash, is_admin=is_admin)
     db.add_to_whitelist(username)
+    audit_log("USER_CREATED", request.username, f"created user '{username}' (admin={is_admin})")
     return (
         f"User '{username}' created and whitelisted.",
         _users_dataframe(),
@@ -676,6 +687,7 @@ def on_create_user(
 
 def on_delete_user(username: str, request: gr.Request) -> tuple:
     if not _is_admin(request):
+        audit_log("ADMIN_ACCESS_DENIED", request.username, "delete_user attempt")
         return "Access denied.", _users_dataframe(), _whitelist_dataframe(), ""
     if not username:
         return "Username is required.", _users_dataframe(), _whitelist_dataframe(), ""
@@ -686,6 +698,7 @@ def on_delete_user(username: str, request: gr.Request) -> tuple:
         return "Cannot delete yourself.", _users_dataframe(), _whitelist_dataframe(), ""
     db.delete_user(user.id)
     db.remove_from_whitelist(username)
+    audit_log("USER_DELETED", request.username, f"deleted user '{username}'")
     return (
         f"User '{username}' deleted.",
         _users_dataframe(),
@@ -696,15 +709,18 @@ def on_delete_user(username: str, request: gr.Request) -> tuple:
 
 def on_add_whitelist(username: str, request: gr.Request) -> tuple:
     if not _is_admin(request):
+        audit_log("ADMIN_ACCESS_DENIED", request.username, "add_whitelist attempt")
         return "Access denied.", _whitelist_dataframe(), ""
     if not username:
         return "Username is required.", _whitelist_dataframe(), ""
     db.add_to_whitelist(username)
+    audit_log("WHITELIST_ADD", request.username, f"added '{username}'")
     return f"'{username}' added to whitelist.", _whitelist_dataframe(), ""
 
 
 def on_remove_whitelist(username: str, request: gr.Request) -> tuple:
     if not _is_admin(request):
+        audit_log("ADMIN_ACCESS_DENIED", request.username, "remove_whitelist attempt")
         return "Access denied.", _whitelist_dataframe(), ""
     if not username:
         return "Username is required.", _whitelist_dataframe(), ""
@@ -722,6 +738,7 @@ def on_remove_whitelist(username: str, request: gr.Request) -> tuple:
                 "",
             )
     db.remove_from_whitelist(username)
+    audit_log("WHITELIST_REMOVE", request.username, f"removed '{username}'")
     return f"'{username}' removed from whitelist.", _whitelist_dataframe(), ""
 
 
