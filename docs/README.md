@@ -9,7 +9,8 @@ Welcome to the AI Hub documentation. Choose a section below to get started.
 | [Installation](installation.md) | Requirements, setup, and optional dependencies |
 | [User Guide](user-guide.md) | Features, UI layouts, conversations, and file handling |
 | [Configuration](configuration.md) | Models, tools, permissions, and admin panel |
-| [Deployment](deployment.md) | Resource requirements, production setup, and scaling |
+| [Deployment](deployment.md) | Resource requirements and environment variables |
+| [Deployment Guide](deployment-guide.md) | Step-by-step production deployment |
 
 ## Quick Links
 
