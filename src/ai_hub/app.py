@@ -1030,6 +1030,7 @@ def build_app(auth_fn) -> gr.Blocks:
                 header_conv_dropdown,
                 header_model_dropdown,
             ],
+            show_progress="hidden",
         )
 
         new_conv_btn.click(
@@ -1050,9 +1051,10 @@ def build_app(auth_fn) -> gr.Blocks:
             fn=on_switch_conversation,
             inputs=[conv_dropdown, state],
             outputs=[chatbot, state],
-            show_progress="minimal",
+            show_progress="hidden",
         )
 
+        # Use .then() to chain file detection after chat to avoid multiple progress bars
         text_input.submit(
             fn=handle_chat,
             inputs=[
@@ -1066,6 +1068,7 @@ def build_app(auth_fn) -> gr.Blocks:
                 permission_mode_dropdown,
             ],
             outputs=[chatbot, text_input, state, usage_display, files_accordion, downloadable_files],
+            concurrency_limit=1,
         )
 
         send_voice_btn.click(
@@ -1191,7 +1194,7 @@ def build_app(auth_fn) -> gr.Blocks:
             fn=on_switch_conversation,
             inputs=[header_conv_dropdown, state],
             outputs=[chatbot, state],
-            show_progress="minimal",
+            show_progress="hidden",
         )
 
         header_new_btn.click(
