@@ -6,7 +6,14 @@ import gradio as gr
 
 from ai_hub.auth import authenticate, hash_password, seed_admin
 from ai_hub.config import ALL_TOOLS, AVAILABLE_MODELS, PERMISSION_MODES, settings
-from ai_hub.database import Database
+
+# Layout options
+LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Focus", "focus"),
+    ("Minimal", "minimal"),
+    ("Productivity", "productivity"),
+)
+from ai_hub.database import Conversation, Database
 from ai_hub.processors import extract_text, save_upload, transcribe_audio
 from ai_hub.providers import ClaudeCodeProvider, ProviderResponse
 
@@ -75,6 +82,56 @@ def _format_usage(resp: ProviderResponse) -> str:
     return " | ".join(parts) if parts else ""
 
 
+def _tag_choices(user_id: int) -> list[tuple[str, str]]:
+    tags = db.get_tags(user_id)
+    return [(t.name, str(t.id)) for t in tags]
+
+
+def _tag_filter_choices(user_id: int) -> list[tuple[str, str]]:
+    return [("All", "")] + _tag_choices(user_id)
+
+
+def _tags_dataframe(user_id: int) -> list[list]:
+    tags = db.get_tags(user_id)
+    return [[t.name, t.id] for t in tags]
+
+
+def _search_results_dataframe(
+    convos: list[Conversation],
+) -> list[list]:
+    return [[c.title, c.updated_at, c.id] for c in convos]
+
+
+def _filtered_conversation_choices(
+    user_id: int, tag_filter_value: str
+) -> list[tuple[str, str]]:
+    if tag_filter_value:
+        convos = db.get_conversations_by_tag(user_id, int(tag_filter_value))
+    else:
+        convos = db.get_conversations(user_id)
+    return [(c.title, str(c.id)) for c in convos]
+
+
+def _extract_file_paths(text: str) -> list[str]:
+    """Extract file paths mentioned in assistant response that exist on disk."""
+    import re
+
+    # Match common file path patterns
+    patterns = [
+        r'`(/[^`\s]+)`',  # Paths in backticks
+        r'(?:^|\s)(/(?:home|tmp|var|usr)[^\s\n\)\"\'<>]+)',  # Unix paths
+    ]
+
+    paths = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.MULTILINE):
+            path = match.group(1).rstrip('.,;:')
+            if Path(path).exists() and Path(path).is_file():
+                paths.add(path)
+
+    return sorted(paths)
+
+
 # ---------------------------------------------------------------------------
 # Chat event handlers
 # ---------------------------------------------------------------------------
@@ -96,11 +153,65 @@ def on_load(request: gr.Request) -> tuple:
     }
     history = _load_history(convo.id)
     show_admin = _is_admin(request)
+    tag_filter = _tag_filter_choices(user_id)
+    tag_ch = _tag_choices(user_id)
+    tags_df = _tags_dataframe(user_id)
+
+    # Load user settings (or defaults)
+    user_settings = db.get_user_settings(user_id)
+    if user_settings:
+        model_val = user_settings.model
+        # Handle empty tools string properly
+        tools_val = [t for t in user_settings.tools.split(",") if t] if user_settings.tools else []
+        perm_val = user_settings.permission_mode
+        sys_prompt_val = user_settings.system_prompt
+        add_dirs_val = user_settings.add_dirs
+        layout_val = user_settings.ui_layout
+    else:
+        model_val = settings.default_model
+        tools_val = list(settings.default_tools)
+        perm_val = "default"
+        sys_prompt_val = ""
+        add_dirs_val = ""
+        layout_val = "focus"
+
+    # Get first values for dropdowns that need a selection
+    first_conv = str(convo.id)
+    first_tag = tag_ch[0][1] if tag_ch else None
+
+    # Get current tags for the active conversation
+    conv_tags = db.get_conversation_tags(convo.id)
+    current_tags_str = ", ".join(t.name for t in conv_tags)
+
+    # Layout-specific visibility
+    show_sidebar = layout_val in ("focus", "productivity")
+    show_header_controls = layout_val == "minimal"
+    show_tags_prominent = layout_val == "productivity"
+
     return (
-        gr.update(choices=choices, value=str(convo.id)),
-        history,
-        state,
-        gr.update(visible=show_admin),
+        gr.update(choices=choices, value=first_conv),     # conv_dropdown
+        history,                                          # chatbot
+        state,                                            # state
+        gr.update(visible=show_admin),                    # admin_panel
+        gr.update(choices=tag_filter, value=""),          # tag_filter_dropdown
+        gr.update(choices=choices, value=first_conv),     # rename_conv_dropdown
+        gr.update(choices=choices, value=first_conv),     # delete_conv_dropdown
+        tags_df,                                          # tags_table
+        gr.update(choices=tag_ch, value=first_tag),       # delete_tag_dropdown
+        gr.update(choices=choices, value=first_conv),     # assign_conv_dropdown
+        gr.update(choices=tag_ch, value=first_tag),       # assign_tag_dropdown
+        current_tags_str,                                 # current_tags_display
+        gr.update(value=model_val),                       # model_dropdown
+        gr.update(value=tools_val),                       # tools_select
+        gr.update(value=perm_val),                        # permission_mode_dropdown
+        gr.update(value=sys_prompt_val),                  # system_prompt_input
+        gr.update(value=add_dirs_val),                    # add_dirs_input
+        gr.update(value=layout_val),                      # layout_dropdown
+        gr.update(visible=show_sidebar),                  # sidebar
+        gr.update(visible=show_header_controls),          # header_controls
+        gr.update(open=show_tags_prominent),              # tags_accordion
+        gr.update(choices=choices, value=first_conv),     # header_conv_dropdown
+        gr.update(value=model_val),                       # header_model_dropdown
     )
 
 
@@ -113,9 +224,13 @@ def on_new_conversation(state: dict, request: gr.Request) -> tuple:
         "claude_session_id": convo.claude_session_id,
     }
     return (
-        gr.update(choices=choices, value=str(convo.id)),
-        [],
-        state,
+        gr.update(choices=choices, value=str(convo.id)),  # conv_dropdown
+        [],                                                # chatbot
+        state,                                             # state
+        gr.update(choices=choices),                         # rename_conv_dropdown
+        gr.update(choices=choices),                         # delete_conv_dropdown
+        gr.update(choices=choices),                         # assign_conv_dropdown
+        gr.update(choices=choices, value=str(convo.id)),  # header_conv_dropdown
     )
 
 
@@ -135,6 +250,7 @@ def on_switch_conversation(
         "claude_session_id": convo.claude_session_id,
     }
     history = _load_history(convo.id)
+
     return history, state
 
 
@@ -156,12 +272,12 @@ def handle_chat(
     add_dirs_raw: str,
     permission_mode: str,
     request: gr.Request,
-) -> tuple[list[dict], dict, dict, str]:
+) -> tuple:
     text = message.get("text", "").strip()
     files: list[str] = message.get("files", [])
 
     if not text and not files:
-        return history, {"text": "", "files": []}, state, ""
+        return history, {"text": "", "files": []}, state, "", gr.update(visible=False), None
 
     saved = [save_upload(f, settings.upload_dir) for f in files]
 
@@ -209,7 +325,25 @@ def handle_chat(
     history = history + [{"role": "assistant", "content": resp.text}]
     db.add_message(conv_id, "assistant", resp.text)
 
-    return history, {"text": "", "files": []}, state, _format_usage(resp)
+    # Extract downloadable files from response
+    detected_files = _extract_file_paths(resp.text)
+    if detected_files:
+        return (
+            history,
+            {"text": "", "files": []},
+            state,
+            _format_usage(resp),
+            gr.update(visible=True),
+            detected_files,
+        )
+    return (
+        history,
+        {"text": "", "files": []},
+        state,
+        _format_usage(resp),
+        gr.update(visible=False),
+        None,
+    )
 
 
 def handle_voice(
@@ -222,9 +356,9 @@ def handle_voice(
     add_dirs_raw: str,
     permission_mode: str,
     request: gr.Request,
-) -> tuple[list[dict], None, dict, str]:
+) -> tuple:
     if audio_path is None:
-        return history, None, state, ""
+        return history, None, state, "", gr.update(visible=False), None
 
     try:
         text = transcribe_audio(audio_path, settings.whisper_model)
@@ -232,7 +366,7 @@ def handle_voice(
         history = history + [
             {"role": "assistant", "content": str(exc)},
         ]
-        return history, None, state, ""
+        return history, None, state, "", gr.update(visible=False), None
 
     user_display = f"[Voice] {text}"
     history = history + [{"role": "user", "content": user_display}]
@@ -260,7 +394,255 @@ def handle_voice(
     history = history + [{"role": "assistant", "content": resp.text}]
     db.add_message(conv_id, "assistant", resp.text)
 
-    return history, None, state, _format_usage(resp)
+    # Extract downloadable files from response
+    detected_files = _extract_file_paths(resp.text)
+    if detected_files:
+        return (
+            history,
+            None,
+            state,
+            _format_usage(resp),
+            gr.update(visible=True),
+            detected_files,
+        )
+    return (
+        history,
+        None,
+        state,
+        _format_usage(resp),
+        gr.update(visible=False),
+        None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Conversation management handlers
+# ---------------------------------------------------------------------------
+
+
+def on_search_conversations(query: str, request: gr.Request) -> list[list]:
+    if not query.strip():
+        return []
+    user_id = _get_user_id(request)
+    results = db.search_conversations(user_id, query.strip())
+    return _search_results_dataframe(results)
+
+
+def on_rename_conversation(
+    conv_id_str: str,
+    new_title: str,
+    state: dict,
+    tag_filter_value: str,
+    request: gr.Request,
+) -> tuple:
+    user_id = _get_user_id(request)
+    if not conv_id_str or not new_title.strip():
+        choices = _filtered_conversation_choices(user_id, tag_filter_value)
+        all_choices = _conversation_choices(user_id)
+        return (
+            gr.update(choices=choices, value=state.get("conversation_id") and str(state["conversation_id"])),
+            gr.update(choices=all_choices),
+            gr.update(choices=all_choices),
+            gr.update(choices=all_choices),
+            "",
+        )
+    db.update_conversation(int(conv_id_str), title=new_title.strip())
+    choices = _filtered_conversation_choices(user_id, tag_filter_value)
+    all_choices = _conversation_choices(user_id)
+    current = state.get("conversation_id")
+    return (
+        gr.update(choices=choices, value=str(current) if current else None),
+        gr.update(choices=all_choices),
+        gr.update(choices=all_choices),
+        gr.update(choices=all_choices),
+        "",
+    )
+
+
+def on_delete_conversation(
+    conv_id_str: str,
+    state: dict,
+    tag_filter_value: str,
+    request: gr.Request,
+) -> tuple:
+    user_id = _get_user_id(request)
+    if not conv_id_str:
+        choices = _filtered_conversation_choices(user_id, tag_filter_value)
+        all_choices = _conversation_choices(user_id)
+        current = state.get("conversation_id")
+        history = _load_history(current) if current else []
+        return (
+            gr.update(choices=choices, value=str(current) if current else None),
+            history,
+            state,
+            gr.update(choices=all_choices),
+            gr.update(choices=all_choices),
+            gr.update(choices=all_choices),
+        )
+
+    deleted_id = int(conv_id_str)
+    db.delete_conversation(deleted_id)
+
+    convos = db.get_conversations(user_id)
+    if not convos:
+        convo = db.create_conversation(user_id)
+    else:
+        convo = convos[0]
+
+    current = state.get("conversation_id")
+    if current == deleted_id:
+        state = {
+            "conversation_id": convo.id,
+            "claude_session_id": convo.claude_session_id,
+        }
+        history = _load_history(convo.id)
+        active_id = convo.id
+    else:
+        history = _load_history(current) if current else []
+        active_id = current
+
+    choices = _filtered_conversation_choices(user_id, tag_filter_value)
+    all_choices = _conversation_choices(user_id)
+    return (
+        gr.update(choices=choices, value=str(active_id) if active_id else None),
+        history,
+        state,
+        gr.update(choices=all_choices),
+        gr.update(choices=all_choices),
+        gr.update(choices=all_choices),
+    )
+
+
+def on_create_tag(name: str | None, request: gr.Request) -> tuple:
+    user_id = _get_user_id(request)
+    if not name or not name.strip():
+        return (
+            _tags_dataframe(user_id),
+            gr.update(choices=_tag_choices(user_id)),
+            gr.update(choices=_tag_choices(user_id)),
+            gr.update(choices=_tag_filter_choices(user_id)),
+            "",
+            "Enter a tag name.",
+        )
+    tag_name = name.strip()
+    try:
+        db.create_tag(user_id, tag_name)
+        status = f"Tag '{tag_name}' created."
+    except Exception:
+        status = f"Tag '{tag_name}' already exists."
+    return (
+        _tags_dataframe(user_id),
+        gr.update(choices=_tag_choices(user_id)),
+        gr.update(choices=_tag_choices(user_id)),
+        gr.update(choices=_tag_filter_choices(user_id)),
+        "",
+        status,
+    )
+
+
+def on_delete_tag(tag_id_str: str, request: gr.Request) -> tuple:
+    user_id = _get_user_id(request)
+    if tag_id_str:
+        db.delete_tag(int(tag_id_str))
+    return (
+        _tags_dataframe(user_id),
+        gr.update(choices=_tag_choices(user_id)),
+        gr.update(choices=_tag_choices(user_id)),
+        gr.update(choices=_tag_filter_choices(user_id)),
+    )
+
+
+def on_assign_tag(
+    conv_id_str: str | None, tag_id_str: str | None, request: gr.Request
+) -> str:
+    if not conv_id_str or not tag_id_str:
+        return ""
+    try:
+        db.add_tag_to_conversation(int(conv_id_str), int(tag_id_str))
+        tags = db.get_conversation_tags(int(conv_id_str))
+        return ", ".join(t.name for t in tags)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def on_unassign_tag(
+    conv_id_str: str | None, tag_id_str: str | None, request: gr.Request
+) -> str:
+    if not conv_id_str or not tag_id_str:
+        return ""
+    try:
+        db.remove_tag_from_conversation(int(conv_id_str), int(tag_id_str))
+        tags = db.get_conversation_tags(int(conv_id_str))
+        return ", ".join(t.name for t in tags)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def on_select_assign_conversation(conv_id_str: str) -> str:
+    if not conv_id_str:
+        return ""
+    tags = db.get_conversation_tags(int(conv_id_str))
+    return ", ".join(t.name for t in tags)
+
+
+def on_tag_filter_change(
+    tag_filter_value: str | None, state: dict, request: gr.Request
+) -> dict:
+    user_id = _get_user_id(request)
+    # Handle None or empty string as "show all"
+    filter_val = tag_filter_value if tag_filter_value else ""
+    choices = _filtered_conversation_choices(user_id, filter_val)
+    current = state.get("conversation_id")
+    current_str = str(current) if current else None
+    # Keep current selection if it's in the filtered list
+    values = [v for _, v in choices]
+    if current_str not in values:
+        current_str = values[0] if values else None
+    return gr.update(choices=choices, value=current_str)
+
+
+# ---------------------------------------------------------------------------
+# Settings handlers
+# ---------------------------------------------------------------------------
+
+
+def on_save_settings(
+    model: str,
+    tools: list[str],
+    permission_mode: str,
+    system_prompt: str,
+    add_dirs: str,
+    layout: str,
+    request: gr.Request,
+) -> str:
+    user_id = _get_user_id(request)
+    db.save_user_settings(
+        user_id,
+        model=model,
+        tools=tools,
+        permission_mode=permission_mode,
+        system_prompt=system_prompt.strip(),
+        add_dirs=add_dirs.strip(),
+        ui_layout=layout,
+    )
+    return "Settings saved."
+
+
+def on_layout_change(layout: str, request: gr.Request) -> tuple:
+    """Handle layout change - save preference and update visibility."""
+    user_id = _get_user_id(request)
+    db.save_user_layout(user_id, layout)
+
+    show_sidebar = layout in ("focus", "productivity")
+    show_header_controls = layout == "minimal"
+    show_tags_prominent = layout == "productivity"
+
+    return (
+        gr.update(visible=show_sidebar),      # sidebar
+        gr.update(visible=show_header_controls),  # header_controls
+        gr.update(open=show_tags_prominent),  # tags_accordion
+        f"Layout changed to {layout}. Some changes may require page refresh.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -358,103 +740,163 @@ def build_app(auth_fn) -> gr.Blocks:
     """Build and return the Gradio application."""
     model_choices = [(label, value) for label, value in AVAILABLE_MODELS]
 
-    with gr.Blocks() as app:
-        gr.Markdown(
-            "# AI Hub\n"
-            "Multimodal AI chat powered by Claude Code. "
-            "Send text, images, PDFs, or voice."
-        )
-
+    with gr.Blocks(title="AI Hub") as app:
         state = gr.State({"conversation_id": None, "claude_session_id": None})
+        sidebar_visible = gr.State(True)
+
+        # -- Header ----------------------------------------------------------
+        with gr.Row():
+            gr.Markdown("## AI Hub")
+            # Header controls for Minimal layout (hidden by default)
+            with gr.Row(visible=False) as header_controls:
+                header_conv_dropdown = gr.Dropdown(
+                    label="Conversation",
+                    choices=[],
+                    interactive=True,
+                    scale=2,
+                )
+                header_model_dropdown = gr.Dropdown(
+                    label="Model",
+                    choices=model_choices,
+                    value=settings.default_model,
+                    interactive=True,
+                    scale=1,
+                )
+                header_new_btn = gr.Button("+", variant="primary", scale=0, min_width=40)
+            toggle_sidebar_btn = gr.Button(
+                "Hide Menu", variant="secondary", scale=0, min_width=100
+            )
 
         with gr.Row():
-            conv_dropdown = gr.Dropdown(
-                label="Conversation",
-                choices=[],
-                interactive=True,
-                scale=3,
-            )
-            model_dropdown = gr.Dropdown(
-                label="Model",
-                choices=model_choices,
-                value=settings.default_model,
-                interactive=True,
-                scale=1,
-            )
-            new_conv_btn = gr.Button("+ New", variant="secondary", scale=1)
+            # -- Sidebar (collapsible) ---------------------------------------
+            with gr.Column(scale=1, min_width=280) as sidebar:
+                # Conversations section
+                with gr.Group():
+                    gr.Markdown("### Conversations")
+                    conv_dropdown = gr.Dropdown(
+                        label="Select",
+                        choices=[],
+                        interactive=True,
+                    )
+                    with gr.Row():
+                        tag_filter_dropdown = gr.Dropdown(
+                            label="Filter",
+                            choices=[("All", "")],
+                            value="",
+                            interactive=True,
+                            scale=2,
+                        )
+                        new_conv_btn = gr.Button("+", variant="primary", scale=0, min_width=40)
 
-        chatbot = gr.Chatbot(height=500, label="Conversation")
+                    with gr.Accordion("Search", open=False):
+                        search_input = gr.Textbox(
+                            placeholder="Search...",
+                            show_label=False,
+                        )
+                        search_btn = gr.Button("Search", size="sm")
+                        search_results = gr.Dataframe(
+                            headers=["Title", "Updated", "ID"],
+                            interactive=False,
+                        )
 
-        usage_display = gr.Textbox(
-            label="Last response",
-            interactive=False,
-            max_lines=1,
-        )
+                    with gr.Accordion("Manage", open=False):
+                        rename_conv_dropdown = gr.Dropdown(
+                            label="Rename", choices=[], interactive=True
+                        )
+                        with gr.Row():
+                            rename_input = gr.Textbox(
+                                placeholder="New title...",
+                                show_label=False,
+                                scale=3,
+                            )
+                            rename_btn = gr.Button("OK", size="sm", scale=0)
+                        delete_conv_dropdown = gr.Dropdown(
+                            label="Delete", choices=[], interactive=True
+                        )
+                        delete_btn = gr.Button("Delete", variant="stop", size="sm")
 
-        with gr.Tabs():
-            with gr.TabItem("Text & Files"):
-                text_input = gr.MultimodalTextbox(
-                    placeholder="Type a message or attach files...",
-                    file_types=[
-                        "image",
-                        ".pdf",
-                        ".docx",
-                        ".xlsx",
-                        ".csv",
-                        ".txt",
-                        ".md",
-                        ".json",
-                        ".py",
-                        ".js",
-                        ".ts",
-                    ],
-                    sources=["upload"],
-                    submit_btn="Send",
-                )
+                # Tags section
+                with gr.Accordion("Tags", open=False) as tags_accordion:
+                    with gr.Row():
+                        new_tag_input = gr.Textbox(
+                            placeholder="New tag...",
+                            show_label=False,
+                            scale=3,
+                        )
+                        create_tag_btn = gr.Button("+", variant="primary", scale=0, min_width=40)
+                    tag_status_msg = gr.Textbox(
+                        show_label=False, interactive=False, max_lines=1
+                    )
+                    tags_table = gr.Dataframe(
+                        headers=["Name", "ID"],
+                        interactive=False,
+                    )
+                    delete_tag_dropdown = gr.Dropdown(
+                        label="Delete tag", choices=[], interactive=True
+                    )
+                    delete_tag_btn = gr.Button("Delete Tag", variant="stop", size="sm")
 
-            with gr.TabItem("Voice"):
-                audio_input = gr.Audio(
-                    sources=["microphone"],
-                    type="filepath",
-                    label="Record your message",
-                )
-                send_voice_btn = gr.Button("Send Voice", variant="primary")
+                    gr.Markdown("**Assign to conversation**")
+                    assign_conv_dropdown = gr.Dropdown(
+                        label="Conversation", choices=[], interactive=True
+                    )
+                    assign_tag_dropdown = gr.Dropdown(
+                        label="Tag", choices=[], interactive=True
+                    )
+                    with gr.Row():
+                        assign_btn = gr.Button("Assign", size="sm", variant="primary")
+                        unassign_btn = gr.Button("Remove", size="sm")
+                    current_tags_display = gr.Textbox(
+                        label="Current tags", interactive=False, max_lines=1
+                    )
 
-        # -- Settings --------------------------------------------------------
+                # Settings section
+                with gr.Accordion("Settings", open=False):
+                    layout_dropdown = gr.Dropdown(
+                        label="UI Layout",
+                        choices=[(label, value) for label, value in LAYOUT_OPTIONS],
+                        value="focus",
+                        interactive=True,
+                    )
+                    model_dropdown = gr.Dropdown(
+                        label="Model",
+                        choices=model_choices,
+                        value=settings.default_model,
+                        interactive=True,
+                    )
+                    tools_select = gr.CheckboxGroup(
+                        label="Tools",
+                        choices=list(ALL_TOOLS),
+                        value=list(settings.default_tools),
+                    )
+                    permission_mode_dropdown = gr.Dropdown(
+                        label="Permission mode",
+                        choices=[(label, value) for label, value in PERMISSION_MODES],
+                        value="default",
+                        interactive=True,
+                    )
+                    system_prompt_input = gr.Textbox(
+                        label="System prompt",
+                        placeholder="e.g. Always respond in Spanish.",
+                        lines=2,
+                    )
+                    add_dirs_input = gr.Textbox(
+                        label="Additional directories",
+                        placeholder="/path/to/dir",
+                        lines=2,
+                    )
+                    save_settings_btn = gr.Button("Save Settings", variant="primary", size="sm")
+                    settings_msg = gr.Textbox(
+                        show_label=False, interactive=False, max_lines=1
+                    )
 
-        with gr.Accordion("Settings", open=False):
-            tools_select = gr.CheckboxGroup(
-                label="Allowed tools",
-                choices=list(ALL_TOOLS),
-                value=list(settings.default_tools),
-            )
-            permission_mode_dropdown = gr.Dropdown(
-                label="Permission mode",
-                choices=[(label, value) for label, value in PERMISSION_MODES],
-                value="default",
-                interactive=True,
-            )
-            system_prompt_input = gr.Textbox(
-                label="System prompt (appended to default)",
-                placeholder="e.g. Always respond in Spanish.",
-                lines=2,
-            )
-            add_dirs_input = gr.Textbox(
-                label="Additional directories (one per line)",
-                placeholder="/home/user/other-project\n/home/user/docs",
-                lines=3,
-            )
+                # Admin section (hidden by default)
+                with gr.Accordion(
+                    "Admin", open=False, visible=False
+                ) as admin_panel:
+                    refresh_admin_btn = gr.Button("Refresh", size="sm")
 
-        # -- Admin Panel -----------------------------------------------------
-
-        with gr.Accordion(
-            "Admin Panel", open=False, visible=False
-        ) as admin_panel:
-            refresh_admin_btn = gr.Button("Refresh tables")
-
-            with gr.Row():
-                with gr.Column():
-                    gr.Markdown("### Create User")
+                    gr.Markdown("**Create User**")
                     create_username = gr.Textbox(
                         label="Username", placeholder="new_user"
                     )
@@ -462,57 +904,153 @@ def build_app(auth_fn) -> gr.Blocks:
                         label="Password", type="password"
                     )
                     create_is_admin = gr.Checkbox(label="Admin", value=False)
-                    create_btn = gr.Button("Create User", variant="primary")
-                    create_msg = gr.Textbox(
-                        label="Status", interactive=False
-                    )
+                    create_btn = gr.Button("Create User", variant="primary", size="sm")
+                    create_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
-                with gr.Column():
-                    gr.Markdown("### Whitelist")
+                    gr.Markdown("**Whitelist**")
                     wl_username = gr.Textbox(
                         label="Username", placeholder="username"
                     )
                     with gr.Row():
-                        wl_add_btn = gr.Button("Add to Whitelist")
-                        wl_remove_btn = gr.Button("Remove from Whitelist")
-                    wl_msg = gr.Textbox(label="Status", interactive=False)
+                        wl_add_btn = gr.Button("Add", size="sm")
+                        wl_remove_btn = gr.Button("Remove", size="sm")
+                    wl_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
-                with gr.Column():
-                    gr.Markdown("### Delete User")
+                    gr.Markdown("**Delete User**")
                     del_username = gr.Textbox(
                         label="Username", placeholder="username"
                     )
-                    del_btn = gr.Button("Delete User", variant="stop")
-                    del_msg = gr.Textbox(label="Status", interactive=False)
+                    del_btn = gr.Button("Delete User", variant="stop", size="sm")
+                    del_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
-            gr.Markdown("### Registered Users")
-            users_table = gr.Dataframe(
-                headers=["Username", "Admin", "Whitelisted", "Created"],
-                interactive=False,
+                    users_table = gr.Dataframe(
+                        headers=["Username", "Admin", "WL", "Created"],
+                        interactive=False,
+                    )
+                    whitelist_table = gr.Dataframe(
+                        headers=["Username", "Created"],
+                        interactive=False,
+                    )
+
+            # -- Main Chat Area ----------------------------------------------
+            with gr.Column(scale=3):
+                chatbot = gr.Chatbot(
+                    height=550,
+                    show_label=False,
+                    container=True,
+                )
+
+                with gr.Tabs():
+                    with gr.TabItem("Chat"):
+                        text_input = gr.MultimodalTextbox(
+                            placeholder="Type a message or attach files...",
+                            file_types=[
+                                "image",
+                                ".pdf",
+                                ".docx",
+                                ".xlsx",
+                                ".csv",
+                                ".txt",
+                                ".md",
+                                ".json",
+                                ".py",
+                                ".js",
+                                ".ts",
+                            ],
+                            sources=["upload"],
+                            submit_btn="Send",
+                            show_label=False,
+                        )
+
+                    with gr.TabItem("Voice"):
+                        audio_input = gr.Audio(
+                            sources=["microphone"],
+                            type="filepath",
+                            label="Record your message",
+                        )
+                        send_voice_btn = gr.Button("Send Voice", variant="primary")
+
+                usage_display = gr.Textbox(
+                    show_label=False,
+                    interactive=False,
+                    max_lines=1,
+                    placeholder="Usage info will appear here after sending a message",
+                )
+
+                # Downloadable files section
+                with gr.Accordion("Generated Files", open=True, visible=False) as files_accordion:
+                    downloadable_files = gr.File(
+                        label="Download",
+                        file_count="multiple",
+                        interactive=False,
+                    )
+
+        # -- Toggle Sidebar Handler ------------------------------------------
+        def toggle_sidebar(visible):
+            new_visible = not visible
+            btn_text = "Show Menu" if not new_visible else "Hide Menu"
+            return (
+                new_visible,
+                gr.update(visible=new_visible),
+                gr.update(value=btn_text),
             )
-            gr.Markdown("### Whitelist")
-            whitelist_table = gr.Dataframe(
-                headers=["Username", "Created"],
-                interactive=False,
-            )
+
+        toggle_sidebar_btn.click(
+            fn=toggle_sidebar,
+            inputs=[sidebar_visible],
+            outputs=[sidebar_visible, sidebar, toggle_sidebar_btn],
+        )
 
         # -- Events ----------------------------------------------------------
 
         app.load(
             fn=on_load,
-            outputs=[conv_dropdown, chatbot, state, admin_panel],
+            outputs=[
+                conv_dropdown,
+                chatbot,
+                state,
+                admin_panel,
+                tag_filter_dropdown,
+                rename_conv_dropdown,
+                delete_conv_dropdown,
+                tags_table,
+                delete_tag_dropdown,
+                assign_conv_dropdown,
+                assign_tag_dropdown,
+                current_tags_display,
+                model_dropdown,
+                tools_select,
+                permission_mode_dropdown,
+                system_prompt_input,
+                add_dirs_input,
+                layout_dropdown,
+                sidebar,
+                header_controls,
+                tags_accordion,
+                header_conv_dropdown,
+                header_model_dropdown,
+            ],
         )
 
         new_conv_btn.click(
             fn=on_new_conversation,
             inputs=[state],
-            outputs=[conv_dropdown, chatbot, state],
+            outputs=[
+                conv_dropdown,
+                chatbot,
+                state,
+                rename_conv_dropdown,
+                delete_conv_dropdown,
+                assign_conv_dropdown,
+                header_conv_dropdown,
+            ],
         )
 
         conv_dropdown.change(
             fn=on_switch_conversation,
             inputs=[conv_dropdown, state],
             outputs=[chatbot, state],
+            show_progress="minimal",
         )
 
         text_input.submit(
@@ -527,7 +1065,7 @@ def build_app(auth_fn) -> gr.Blocks:
                 add_dirs_input,
                 permission_mode_dropdown,
             ],
-            outputs=[chatbot, text_input, state, usage_display],
+            outputs=[chatbot, text_input, state, usage_display, files_accordion, downloadable_files],
         )
 
         send_voice_btn.click(
@@ -542,7 +1080,144 @@ def build_app(auth_fn) -> gr.Blocks:
                 add_dirs_input,
                 permission_mode_dropdown,
             ],
-            outputs=[chatbot, audio_input, state, usage_display],
+            outputs=[chatbot, audio_input, state, usage_display, files_accordion, downloadable_files],
+        )
+
+        # Conversation management events
+        search_btn.click(
+            fn=on_search_conversations,
+            inputs=[search_input],
+            outputs=[search_results],
+        )
+
+        rename_btn.click(
+            fn=on_rename_conversation,
+            inputs=[rename_conv_dropdown, rename_input, state, tag_filter_dropdown],
+            outputs=[
+                conv_dropdown,
+                rename_conv_dropdown,
+                delete_conv_dropdown,
+                assign_conv_dropdown,
+                rename_input,
+            ],
+        )
+
+        delete_btn.click(
+            fn=on_delete_conversation,
+            inputs=[delete_conv_dropdown, state, tag_filter_dropdown],
+            outputs=[
+                conv_dropdown,
+                chatbot,
+                state,
+                rename_conv_dropdown,
+                delete_conv_dropdown,
+                assign_conv_dropdown,
+            ],
+        )
+
+        create_tag_btn.click(
+            fn=on_create_tag,
+            inputs=[new_tag_input],
+            outputs=[
+                tags_table,
+                delete_tag_dropdown,
+                assign_tag_dropdown,
+                tag_filter_dropdown,
+                new_tag_input,
+                tag_status_msg,
+            ],
+        )
+
+        delete_tag_btn.click(
+            fn=on_delete_tag,
+            inputs=[delete_tag_dropdown],
+            outputs=[
+                tags_table,
+                delete_tag_dropdown,
+                assign_tag_dropdown,
+                tag_filter_dropdown,
+            ],
+        )
+
+        assign_btn.click(
+            fn=on_assign_tag,
+            inputs=[assign_conv_dropdown, assign_tag_dropdown],
+            outputs=[current_tags_display],
+        )
+
+        unassign_btn.click(
+            fn=on_unassign_tag,
+            inputs=[assign_conv_dropdown, assign_tag_dropdown],
+            outputs=[current_tags_display],
+        )
+
+        assign_conv_dropdown.change(
+            fn=on_select_assign_conversation,
+            inputs=[assign_conv_dropdown],
+            outputs=[current_tags_display],
+            show_progress="hidden",
+        )
+
+        tag_filter_dropdown.change(
+            fn=on_tag_filter_change,
+            inputs=[tag_filter_dropdown, state],
+            outputs=[conv_dropdown],
+            show_progress="hidden",
+        )
+
+        # Settings events
+        save_settings_btn.click(
+            fn=on_save_settings,
+            inputs=[
+                model_dropdown,
+                tools_select,
+                permission_mode_dropdown,
+                system_prompt_input,
+                add_dirs_input,
+                layout_dropdown,
+            ],
+            outputs=[settings_msg],
+        )
+
+        layout_dropdown.change(
+            fn=on_layout_change,
+            inputs=[layout_dropdown],
+            outputs=[sidebar, header_controls, tags_accordion, settings_msg],
+            show_progress="hidden",
+        )
+
+        # Header controls for Minimal layout (no sync to sidebar - they're mutually exclusive)
+        header_conv_dropdown.change(
+            fn=on_switch_conversation,
+            inputs=[header_conv_dropdown, state],
+            outputs=[chatbot, state],
+            show_progress="minimal",
+        )
+
+        header_new_btn.click(
+            fn=on_new_conversation,
+            inputs=[state],
+            outputs=[
+                conv_dropdown,
+                chatbot,
+                state,
+                rename_conv_dropdown,
+                delete_conv_dropdown,
+                assign_conv_dropdown,
+                header_conv_dropdown,
+            ],
+        )
+
+        # Sync header model to sidebar (only one direction to avoid event loops)
+        # Header controls are only visible in Minimal layout where sidebar is hidden
+        def sync_header_to_sidebar_model(model_val):
+            return gr.update(value=model_val)
+
+        header_model_dropdown.change(
+            fn=sync_header_to_sidebar_model,
+            inputs=[header_model_dropdown],
+            outputs=[model_dropdown],
+            show_progress="hidden",
         )
 
         # Admin events

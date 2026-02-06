@@ -64,15 +64,31 @@ class ClaudeCodeProvider(Provider):
         tools = allowed_tools if allowed_tools is not None else self._default_tools
         prompt = self._build_prompt(message, files)
         cmd = self._build_command(
-            prompt, session_id, model, system_prompt, tools, add_dirs, permission_mode
+            session_id, model, system_prompt, tools, add_dirs, permission_mode
         )
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300,
+        # Sanitize prompt to remove surrogate characters that can't be encoded
+        # (common in PDF text extraction)
+        prompt = prompt.encode("utf-8", errors="surrogatepass").decode(
+            "utf-8", errors="replace"
         )
+
+        # Pass prompt via stdin to avoid shell escaping issues with special
+        # characters (e.g. prompts starting with '-' being parsed as options)
+        try:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=600,  # 10 minutes for complex tasks
+            )
+        except subprocess.TimeoutExpired:
+            return ProviderResponse(
+                text="Request timed out after 10 minutes. The task may be too complex. "
+                     "Try breaking it into smaller steps or simplifying the request.",
+                session_id=session_id,
+            )
 
         if result.returncode != 0:
             return ProviderResponse(
@@ -91,7 +107,6 @@ class ClaudeCodeProvider(Provider):
 
     def _build_command(
         self,
-        prompt: str,
         session_id: str | None,
         model: str | None,
         system_prompt: str | None,
@@ -99,7 +114,7 @@ class ClaudeCodeProvider(Provider):
         add_dirs: list[str] | None,
         permission_mode: str | None,
     ) -> list[str]:
-        cmd = ["claude", "-p", prompt, "--output-format", "json"]
+        cmd = ["claude", "-p", "--output-format", "json"]
 
         if session_id:
             cmd.extend(["--resume", session_id])

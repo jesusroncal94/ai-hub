@@ -10,11 +10,16 @@ Lightweight multimodal AI chat interface powered by Claude Code.
 - **Model selection** — switch between Sonnet, Opus, and Haiku on the fly
 - **Configurable tools** — enable/disable Claude Code tools (Read, Bash, Edit, WebSearch, etc.)
 - **Custom system prompt** — append instructions to Claude's default system prompt
+- **Persistent user settings** — model, tools, permissions, and prompts saved per user
 - **Usage metrics** — model used, cost (USD), and token count displayed after each response
 - **Conversation persistence** — messages saved in SQLite (`.data/ai_hub.db`)
 - **Multi-conversation UI** — switch between conversations via dropdown, create new ones
+- **Search conversations** — find conversations by title or message content
+- **Rename & delete** — rename conversation titles or delete conversations from the UI
+- **Tags** — create per-user tags, assign them to conversations, and filter by tag
 - **Text chat** with conversation memory (session continuity via Claude Code `--resume`)
 - **File uploads** — images (vision), PDFs, Word, Excel, CSV, code files, and plain text
+- **File downloads** — automatically detects and offers download links for files created/modified by Claude
 - **Voice input** via microphone (requires optional Whisper dependency)
 - **Claude Code backend** — uses your Max/Pro plan subscription (no API key needed)
 - **Extensible provider system** — abstract base for adding other AI providers
@@ -43,30 +48,86 @@ On first run:
 1. The app seeds an admin user with default credentials: **admin / admin**
 2. A login prompt appears at `http://127.0.0.1:7860`
 3. Log in with `admin` / `admin`
-4. Open the **Admin Panel** (accordion at the bottom) to create more users
+4. Open the **Admin** section in the sidebar to create more users
 
 ## UI Layout
 
+AI Hub offers 3 UI layouts that can be selected from the **Settings** accordion. Your layout preference is saved per user.
+
+### Focus (default)
+
+Collapsible sidebar for all controls, keeping the chat as the main focus.
+
 ```
-┌──────────────────────────────────────────────┐
-│ # AI Hub                                     │
-│ [Conversation ▼]  [Model ▼]  [+ New]         │
-│ ┌──────────────────────────────────────────┐ │
-│ │ Chatbot (height=500)                     │ │
-│ └──────────────────────────────────────────┘ │
-│ Last response: claude-sonnet... | $0.003 | …  │
-│ [Text & Files tab] [Voice tab]               │
-│ ┌──────────────────────────────────────────┐ │
-│ │ MultimodalTextbox / Audio                │ │
-│ └──────────────────────────────────────────┘ │
-│ ▶ Settings (tools, system prompt)            │
-│ ▶ Admin Panel (admin users only)             │
-└──────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│  AI Hub                                      [Hide Menu]      │
+├───────────────┬───────────────────────────────────────────────┤
+│  SIDEBAR      │  CHAT                                         │
+│               │  ┌───────────────────────────────────────────┐│
+│ Conversations │  │                                           ││
+│  [Select ▼]   │  │           Chat messages                   ││
+│  [Filter ▼][+]│  │                                           ││
+│  ▶ Search     │  │                                           ││
+│  ▶ Manage     │  └───────────────────────────────────────────┘│
+│               │  [Chat tab] [Voice tab]                       │
+│ ▶ Tags        │  ┌───────────────────────────────────────────┐│
+│               │  │ Type a message or attach files...    Send ││
+│ ▶ Settings    │  └───────────────────────────────────────────┘│
+│   Model, Tools│  claude-sonnet... | $0.003 | 150 in → 200 out │
+│   Permissions │                                               │
+│               │                                               │
+│ ▶ Admin       │                                               │
+│  (if admin)   │                                               │
+└───────────────┴───────────────────────────────────────────────┘
+```
+
+Click **Hide Menu** to collapse the sidebar and maximize chat space. Click **Show Menu** to restore it.
+
+### Minimal
+
+ChatGPT-style layout with no sidebar. Conversation and model selectors appear in the header bar.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│  AI Hub     [Conversation ▼] [Model ▼] [+]     [Hide Menu]    │
+├───────────────────────────────────────────────────────────────┤
+│                                                               │
+│                       Chat messages                           │
+│                                                               │
+│  ┌───────────────────────────────────────────────────────┐   │
+│  │ Type a message or attach files...               Send  │   │
+│  └───────────────────────────────────────────────────────┘   │
+│  claude-sonnet... | $0.003 | 150 in → 200 out                 │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### Productivity
+
+Sidebar with Tags accordion open by default for quick navigation.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│  AI Hub                                      [Hide Menu]      │
+├───────────────┬───────────────────────────────────────────────┤
+│  SIDEBAR      │  CHAT                                         │
+│               │  ┌───────────────────────────────────────────┐│
+│ Conversations │  │                                           ││
+│  [Select ▼]   │  │           Chat messages                   ││
+│               │  │                                           ││
+│ ▼ Tags        │  │                                           ││
+│   [work]      │  └───────────────────────────────────────────┘│
+│   [research]  │  [Chat tab] [Voice tab]                       │
+│   [personal]  │  ┌───────────────────────────────────────────┐│
+│               │  │ Type a message or attach files...    Send ││
+│ ▶ Settings    │  └───────────────────────────────────────────┘│
+│               │                                               │
+│ ▶ Admin       │                                               │
+└───────────────┴───────────────────────────────────────────────┘
 ```
 
 ## Claude CLI Settings
 
-These settings are exposed from the Claude Code CLI and can be changed at any time during a session.
+These settings are exposed from the Claude Code CLI and can be changed at any time during a session. All settings are **persisted per user** — click **Save Settings** to store your preferences, and they'll be restored automatically on your next login.
 
 ### Model Selection
 
@@ -164,6 +225,31 @@ Safeguards:
 - Conversations persist across app restarts
 - Claude Code session IDs are saved per conversation, enabling `--resume` continuity
 
+Open the **Conversation Management** accordion to access additional features:
+
+### Search
+
+Search conversations by title or message content. Results show the title, last updated date, and conversation ID.
+
+### Rename & Delete
+
+- **Rename** — select a conversation and provide a new title. All dropdowns update automatically.
+- **Delete** — remove a conversation permanently. If the active conversation is deleted, the app switches to the most recent remaining one.
+
+### Tags
+
+Tags let you organize conversations into categories (e.g. "work", "personal", "research").
+
+| Action | Description |
+|--------|-------------|
+| **Create Tag** | Add a new tag (unique per user) |
+| **Delete Tag** | Remove a tag and all its assignments |
+| **Assign Tag** | Link a tag to a conversation |
+| **Remove Tag** | Unlink a tag from a conversation |
+| **Filter by Tag** | Use the top-bar dropdown to show only conversations with a specific tag |
+
+The **Current tags** field shows which tags are assigned to the selected conversation.
+
 ## Voice Support (Optional)
 
 Voice input requires OpenAI Whisper (pulls in PyTorch) and `ffmpeg` for audio processing:
@@ -197,7 +283,7 @@ src/ai_hub/
 ├── app.py            # Gradio UI, event handlers, admin panel, and entry point
 ├── auth.py           # PBKDF2 password hashing and DB-backed authentication
 ├── config.py         # Application settings, available models and tools
-├── database.py       # SQLite persistence (users, whitelist, conversations, messages)
+├── database.py       # SQLite persistence (users, whitelist, conversations, messages, tags)
 ├── providers.py      # AI provider abstraction + Claude Code CLI implementation
 └── processors.py     # Voice transcription and document text extraction
 ```
@@ -252,3 +338,6 @@ All persistent data is stored under `.data/` (git-ignored):
 | `whitelist` | Usernames allowed to log in |
 | `conversations` | Per-user conversations (title, claude_session_id) |
 | `messages` | Chat messages (role, content, timestamps) |
+| `tags` | Per-user tags for organizing conversations |
+| `conversation_tags` | Junction table linking conversations to tags |
+| `user_settings` | Per-user preferences (model, tools, permission_mode, system_prompt, add_dirs) |
