@@ -13,6 +13,7 @@ wheels/
 
 # Data (uploads, database, users)
 .data/
+.uploads/
 
 # IDE
 .idea/
