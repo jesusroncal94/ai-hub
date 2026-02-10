@@ -51,6 +51,13 @@ class Settings:
         default_factory=lambda: os.getenv("AI_HUB_DEFAULT_MODEL", "sonnet")
     )
     default_tools: tuple[str, ...] = ("Read",)
+    allowed_paths: list[str] = field(
+        default_factory=lambda: [
+            p.strip()
+            for p in os.getenv("AI_HUB_ALLOWED_PATHS", str(Path.home())).split(",")
+            if p.strip()
+        ]
+    )
     server_host: str = field(
         default_factory=lambda: os.getenv("AI_HUB_HOST", "127.0.0.1")
     )

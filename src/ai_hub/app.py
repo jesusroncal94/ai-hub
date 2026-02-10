@@ -1293,6 +1293,7 @@ def main() -> None:
         server_port=settings.server_port,
         theme=gr.themes.Soft(),
         auth=auth_fn,
+        allowed_paths=settings.allowed_paths,
     )
 
 
