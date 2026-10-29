@@ -2,6 +2,8 @@
 
 Lightweight multimodal AI chat interface powered by Claude Code.
 
+> **Demo:** this is a sample project and is not maintained.
+
 ![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue)
 ![Gradio 6](https://img.shields.io/badge/gradio-6.x-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
